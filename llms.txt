@@ -8,26 +8,42 @@ pw-router is a stateless OpenAI-compatible API gateway that routes requests to m
 
 - Language: Python 3.12, FastAPI
 - License: MIT
-- Core: ~1,000 lines across 8 files
-- Dependencies: 4 (fastapi, uvicorn, httpx, pyyaml)
-- Status: v0.1.0 — production-ready MVP
+- Core: ~1,100 lines across 8 files
+- Dependencies: 4 (fastapi, uvicorn, httpx, pyyaml) — pinned via requirements.lock
+- Status: v0.1.0 — production-ready, security-hardened
 - Repo: github.com/Protocol-Wealth/pw-router
+- Live: pw-router.fly.dev (ORD region)
 
 ## API Surface
 
+- GET / — service info, version, available endpoints
 - POST /v1/chat/completions — OpenAI-compatible chat (streaming + non-streaming)
 - GET /v1/models — list available models (filtered by API key)
 - GET /health — router health + per-model circuit breaker status
+- GET /robots.txt — disallow all crawling
+- GET /.well-known/security.txt — RFC 9116 security contact
 
 ## Architecture
 
-Requests flow: Auth → Pre-middleware → Router (model select + circuit breaker) → Provider Adapter → Post-middleware → Response.
+Requests flow: Auth → Body sanitization (field allowlist) → Pre-middleware → Router (model select + circuit breaker) → Provider Adapter → Post-middleware → Response.
 
 Provider adapters translate between OpenAI format and provider-native formats. The Anthropic adapter handles full request/response translation including streaming SSE event conversion.
 
 Circuit breakers are per-model, in-memory (CLOSED → OPEN → HALF_OPEN). Fallback chains automatically route to the next healthy model.
 
-Middleware plugins are Python modules with pre_request/post_response async hooks that can modify requests, add routing tags, or block traffic.
+Middleware plugins are Python modules (restricted to plugins.* namespace) with pre_request/post_response async hooks that can modify requests, add routing tags, or block traffic. Plugin load failures are fatal (fail-closed).
+
+## Security
+
+- Request body sanitization: allowlist of permitted fields, unknown fields stripped
+- Constant-time API key comparison (hmac.compare_digest)
+- 10MB body size enforced on actual bytes (not Content-Length header)
+- 5-minute max stream duration timeout
+- Plugin loading restricted to plugins.* namespace only
+- Security response headers (X-Content-Type-Options, X-Frame-Options, Cache-Control: no-store)
+- Generic error messages to clients (no provider details leaked)
+- Non-root container user, pinned dependency lockfile
+- No disk writes, no telemetry, no analytics
 
 ## Configuration
 
@@ -40,3 +56,4 @@ Single YAML file with ${ENV_VAR} expansion. No database. Models, routing rules, 
 - Plugin guide: docs/plugins.md
 - Deployment: docs/deployment.md
 - Contributing: CONTRIBUTING.md
+- Security: SECURITY.md
