@@ -98,6 +98,9 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Configure structured logging for audit trail
+        logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
+
         cfg = injected_config
         if cfg is None:
             path = os.environ.get("CONFIG_PATH", "config.yaml")

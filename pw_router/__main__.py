@@ -5,6 +5,7 @@
 """CLI entry point: python -m pw_router"""
 
 import argparse
+import logging
 import os
 
 import uvicorn
@@ -19,6 +20,13 @@ def main():
 
     if args.config:
         os.environ["CONFIG_PATH"] = args.config
+
+    # Configure pw_router loggers to emit to stderr (picked up by Fly.io)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        handlers=[logging.StreamHandler()],
+    )
 
     uvicorn.run(
         "pw_router.server:app",
