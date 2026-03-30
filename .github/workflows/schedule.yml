@@ -1,0 +1,54 @@
+name: Machine Schedule
+
+# 10 AM - 4 PM Eastern, weekdays only
+# UTC times assume EDT (UTC-4). In winter (EST/UTC-5) this shifts to 9 AM - 3 PM ET.
+# Adjust crons by +1 hour in November if needed.
+
+on:
+  schedule:
+    - cron: "0 14 * * 1-5"  # Start: 10 AM EDT / 9 AM EST, Mon-Fri
+    - cron: "0 20 * * 1-5"  # Stop:  4 PM EDT / 3 PM EST, Mon-Fri
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "start or stop"
+        required: true
+        type: choice
+        options:
+          - start
+          - stop
+
+jobs:
+  manage-machines:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Determine action
+        id: action
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "action=${{ inputs.action }}" >> "$GITHUB_OUTPUT"
+          else
+            CRON="${{ github.event.schedule }}"
+            if [ "$CRON" = "0 14 * * 1-5" ]; then
+              echo "action=start" >> "$GITHUB_OUTPUT"
+            else
+              echo "action=stop" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: ${{ steps.action.outputs.action }} machines
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          ACTION="${{ steps.action.outputs.action }}"
+          echo "Action: $ACTION"
+
+          for APP_MACHINE in "pw-router:8e795eb7243308" "pw-redact:1854296f49dd48"; do
+            APP="${APP_MACHINE%%:*}"
+            MACHINE="${APP_MACHINE##*:}"
+            echo "→ $ACTION $APP ($MACHINE)"
+            flyctl machines "$ACTION" "$MACHINE" --app "$APP" || true
+          done
