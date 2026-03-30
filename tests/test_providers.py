@@ -114,9 +114,7 @@ class TestOpenAIAdapter:
     @pytest.mark.asyncio
     @respx.mock
     async def test_health_check_unhealthy(self):
-        respx.get("https://api.openai.com/v1/models").mock(
-            return_value=httpx.Response(500)
-        )
+        respx.get("https://api.openai.com/v1/models").mock(return_value=httpx.Response(500))
 
         async with httpx.AsyncClient() as client:
             adapter = OpenAIAdapter(client)

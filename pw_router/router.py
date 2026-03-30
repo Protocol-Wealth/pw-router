@@ -81,9 +81,7 @@ class RouterEngine:
 
         threshold = health.get("unhealthy_threshold", 3)
         healthy_threshold = health.get("healthy_threshold", 1)
-        cooldown = health.get(
-            "cooldown_seconds", health.get("check_interval_seconds", 30)
-        )
+        cooldown = health.get("cooldown_seconds", health.get("check_interval_seconds", 30))
         if cooldown <= 0:
             cooldown = 30.0
 
@@ -129,9 +127,7 @@ class RouterEngine:
 
         raise AllModelsUnavailableError()
 
-    def _resolve_candidates(
-        self, requested_model: str | None, tags: set[str]
-    ) -> list[str]:
+    def _resolve_candidates(self, requested_model: str | None, tags: set[str]) -> list[str]:
         """Build ordered list of candidate models to try."""
         if requested_model:
             chain = self._find_chain(requested_model)

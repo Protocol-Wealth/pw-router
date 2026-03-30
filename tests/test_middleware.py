@@ -41,9 +41,7 @@ class TestMiddlewareResult:
         assert result.status_code == 400
 
     def test_blocking(self):
-        result = MiddlewareResult(
-            allow=False, error_message="Blocked", status_code=403
-        )
+        result = MiddlewareResult(allow=False, error_message="Blocked", status_code=403)
         assert result.allow is False
         assert result.error_message == "Blocked"
 
@@ -55,9 +53,7 @@ class TestHookExecution:
             ctx.request_body["injected"] = True
             return MiddlewareResult(allow=True)
 
-        ctx = MiddlewareContext(
-            request_body={"model": "test"}, client_name="c"
-        )
+        ctx = MiddlewareContext(request_body={"model": "test"}, client_name="c")
         result = await hook(ctx)
         assert result.allow is True
         assert ctx.request_body["injected"] is True
@@ -75,9 +71,7 @@ class TestHookExecution:
     @pytest.mark.asyncio
     async def test_pre_request_blocks(self):
         async def hook(ctx: MiddlewareContext) -> MiddlewareResult:
-            return MiddlewareResult(
-                allow=False, error_message="Denied", status_code=403
-            )
+            return MiddlewareResult(allow=False, error_message="Denied", status_code=403)
 
         ctx = MiddlewareContext(request_body={}, client_name="c")
         result = await hook(ctx)

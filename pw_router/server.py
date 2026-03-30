@@ -194,9 +194,7 @@ def create_app(config: dict | None = None) -> FastAPI:
         # 3. Select model
         requested_model = ctx.request_body.get("model")
         try:
-            model_name = router_engine.select_model(
-                requested_model, ctx.tags, allowed_models
-            )
+            model_name = router_engine.select_model(requested_model, ctx.tags, allowed_models)
         except ModelNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ModelNotAllowedError as e:
@@ -213,9 +211,7 @@ def create_app(config: dict | None = None) -> FastAPI:
         # 5. Forward request
         try:
             if is_stream:
-                stream = await adapter.chat_completion(
-                    ctx.request_body, model_cfg, stream=True
-                )
+                stream = await adapter.chat_completion(ctx.request_body, model_cfg, stream=True)
                 return StreamingResponse(
                     _wrap_stream(stream, model_name, router_engine, start),
                     media_type="text/event-stream",

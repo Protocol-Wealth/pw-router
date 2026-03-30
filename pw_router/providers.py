@@ -51,9 +51,7 @@ class OpenAIAdapter:
             payload["stream"] = True
             return self._stream_response(url, payload, headers, timeout)
 
-        response = await self.client.post(
-            url, json=payload, headers=headers, timeout=timeout
-        )
+        response = await self.client.post(url, json=payload, headers=headers, timeout=timeout)
         response.raise_for_status()
         return response.json()
 
@@ -78,9 +76,7 @@ class OpenAIAdapter:
         headers = {"Authorization": f"Bearer {model_config.get('api_key', '')}"}
         timeout = model_config.get("check_timeout_seconds", 5)
         try:
-            resp = await self.client.get(
-                f"{base_url}/models", headers=headers, timeout=timeout
-            )
+            resp = await self.client.get(f"{base_url}/models", headers=headers, timeout=timeout)
             return resp.status_code == 200
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
@@ -173,9 +169,7 @@ class AnthropicAdapter:
             payload["stream"] = True
             return self._stream_response(url, payload, headers, model_alias, timeout)
 
-        response = await self.client.post(
-            url, json=payload, headers=headers, timeout=timeout
-        )
+        response = await self.client.post(url, json=payload, headers=headers, timeout=timeout)
         response.raise_for_status()
         return self._from_anthropic(response.json(), model_alias)
 
@@ -280,9 +274,7 @@ class AnthropicAdapter:
         headers = self._anthropic_headers(model_config)
         timeout = model_config.get("check_timeout_seconds", 5)
         try:
-            resp = await self.client.get(
-                f"{base_url}/v1/models", headers=headers, timeout=timeout
-            )
+            resp = await self.client.get(f"{base_url}/v1/models", headers=headers, timeout=timeout)
             return resp.status_code == 200
         except (httpx.ConnectError, httpx.TimeoutException):
             return False

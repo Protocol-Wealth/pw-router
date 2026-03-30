@@ -4,7 +4,6 @@
 
 """Tests for health check loop."""
 
-
 import httpx
 import pytest
 import respx
@@ -38,9 +37,7 @@ class TestHealthCheckLoop:
     @pytest.mark.asyncio
     @respx.mock
     async def test_unhealthy_endpoint_opens_circuit(self):
-        respx.get("https://api.openai.com/v1/models").mock(
-            return_value=httpx.Response(500)
-        )
+        respx.get("https://api.openai.com/v1/models").mock(return_value=httpx.Response(500))
 
         async with httpx.AsyncClient() as client:
             adapter = OpenAIAdapter(client)

@@ -23,9 +23,7 @@ async def post_response(ctx: MiddlewareContext) -> MiddlewareResult:
         "latency_ms": round(ctx.latency_ms, 1) if ctx.latency_ms else None,
         "tags": sorted(ctx.tags),
         "prompt_tokens": (ctx.response_body or {}).get("usage", {}).get("prompt_tokens"),
-        "completion_tokens": (ctx.response_body or {}).get("usage", {}).get(
-            "completion_tokens"
-        ),
+        "completion_tokens": (ctx.response_body or {}).get("usage", {}).get("completion_tokens"),
     }
     logger.info(json.dumps(log_entry))
     return MiddlewareResult(allow=True)

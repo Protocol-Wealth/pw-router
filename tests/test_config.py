@@ -73,9 +73,7 @@ class TestLoadConfig:
             "server": {
                 "host": "0.0.0.0",
                 "port": 8100,
-                "api_keys": [
-                    {"key": "test", "name": "default", "allowed_models": ["*"]}
-                ],
+                "api_keys": [{"key": "test", "name": "default", "allowed_models": ["*"]}],
             },
             "models": {
                 "m1": {
@@ -87,9 +85,7 @@ class TestLoadConfig:
             },
             "routing": {"default_model": "m1"},
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump(config_data, f)
             f.flush()
             config = load_config(f.name)
@@ -101,11 +97,7 @@ class TestLoadConfig:
     def test_env_var_expansion_in_file(self, monkeypatch):
         monkeypatch.setenv("MY_API_KEY", "sk-test-123")
         config_data = {
-            "server": {
-                "api_keys": [
-                    {"key": "k", "name": "d", "allowed_models": ["*"]}
-                ]
-            },
+            "server": {"api_keys": [{"key": "k", "name": "d", "allowed_models": ["*"]}]},
             "models": {
                 "m1": {
                     "provider": "openai",
@@ -115,9 +107,7 @@ class TestLoadConfig:
             },
             "routing": {"default_model": "m1"},
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump(config_data, f)
             f.flush()
             config = load_config(f.name)
@@ -126,9 +116,7 @@ class TestLoadConfig:
         os.unlink(f.name)
 
     def test_invalid_yaml_raises(self):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("not: valid: yaml: [")
             f.flush()
             with pytest.raises(yaml.YAMLError):
@@ -136,9 +124,7 @@ class TestLoadConfig:
         os.unlink(f.name)
 
     def test_empty_file_raises(self):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")
             f.flush()
             with pytest.raises(ValueError, match="Invalid config"):

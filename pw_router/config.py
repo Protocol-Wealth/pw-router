@@ -62,15 +62,11 @@ def validate_config(config: dict) -> None:
 
     default = config["routing"]["default_model"]
     if default not in config["models"]:
-        raise ValueError(
-            f"routing.default_model '{default}' not found in models"
-        )
+        raise ValueError(f"routing.default_model '{default}' not found in models")
 
     valid_providers = {"openai", "anthropic", "vllm", "ollama", "custom_http"}
     for name, model_cfg in config["models"].items():
         if "provider" not in model_cfg:
             raise ValueError(f"Model '{name}' missing 'provider'")
         if model_cfg["provider"] not in valid_providers:
-            raise ValueError(
-                f"Model '{name}' has invalid provider '{model_cfg['provider']}'"
-            )
+            raise ValueError(f"Model '{name}' has invalid provider '{model_cfg['provider']}'")

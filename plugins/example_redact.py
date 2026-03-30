@@ -33,9 +33,7 @@ async def pre_request(ctx: MiddlewareContext) -> MiddlewareResult:
 
     messages = ctx.request_body.get("messages", [])
     full_text = " ".join(
-        m.get("content", "")
-        for m in messages
-        if isinstance(m.get("content"), str)
+        m.get("content", "") for m in messages if isinstance(m.get("content"), str)
     )
 
     if not full_text.strip():
@@ -58,9 +56,7 @@ async def pre_request(ctx: MiddlewareContext) -> MiddlewareResult:
         if entities:
             ctx.tags.add("client-data")
             ctx.metadata["pii_entities_count"] = len(entities)
-            ctx.metadata["pii_entity_types"] = list(
-                {e["entity_type"] for e in entities}
-            )
+            ctx.metadata["pii_entity_types"] = list({e["entity_type"] for e in entities})
 
     except Exception:
         # Redaction service down: fail open but tag for caution
