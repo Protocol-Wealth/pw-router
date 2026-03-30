@@ -136,6 +136,14 @@ class TestLoadPlugin:
         with pytest.raises(ModuleNotFoundError):
             load_plugin("plugins.nonexistent_plugin", "pre_request")
 
+    def test_disallowed_module_path_raises(self):
+        with pytest.raises(ValueError, match="not in allowed namespace"):
+            load_plugin("os", "pre_request")
+
+    def test_disallowed_nested_path_raises(self):
+        with pytest.raises(ValueError, match="not in allowed namespace"):
+            load_plugin("subprocess.run", "pre_request")
+
 
 class TestLoadPluginsFromConfig:
     def test_empty_config(self):
@@ -166,12 +174,22 @@ class TestLoadPluginsFromConfig:
         assert pre == []
         assert len(post) == 1
 
-    def test_invalid_plugin_skipped(self):
+    def test_invalid_plugin_raises(self):
         config = {
             "pre_request": [
                 {"plugin": "plugins.nonexistent_xyz", "config": {}},
             ],
             "post_response": [],
         }
-        pre, post = load_plugins_from_config(config)
-        assert pre == []
+        with pytest.raises(ModuleNotFoundError):
+            load_plugins_from_config(config)
+
+    def test_disallowed_plugin_path_raises(self):
+        config = {
+            "pre_request": [
+                {"plugin": "os", "config": {}},
+            ],
+            "post_response": [],
+        }
+        with pytest.raises(ValueError, match="not in allowed namespace"):
+            load_plugins_from_config(config)

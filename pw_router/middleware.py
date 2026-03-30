@@ -13,6 +13,10 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("pw_router.middleware")
 
+# Only allow loading plugins from these module prefixes.
+# Prevents arbitrary code execution via config.yaml plugin paths.
+ALLOWED_PLUGIN_PREFIXES = ("plugins.",)
+
 
 @dataclass
 class MiddlewareContext:
@@ -51,7 +55,15 @@ def load_plugin(module_path: str, hook_name: str) -> MiddlewareHook:
 
     Returns:
         Async callable middleware hook function.
+
+    Raises:
+        ValueError: If module path is not in the allowed namespace or hook not found.
     """
+    if not any(module_path.startswith(prefix) for prefix in ALLOWED_PLUGIN_PREFIXES):
+        raise ValueError(
+            f"Plugin path '{module_path}' not in allowed namespace. "
+            f"Plugins must start with one of: {ALLOWED_PLUGIN_PREFIXES}"
+        )
     module = importlib.import_module(module_path)
     hook = getattr(module, hook_name, None)
     if hook is None:
@@ -67,6 +79,9 @@ def load_plugins_from_config(
     Returns:
         Tuple of (pre_request_hooks, post_response_hooks).
         Each hook is paired with its plugin-specific config dict.
+
+    Raises:
+        ValueError: If a plugin fails to load (fail-closed for security).
     """
     pre_hooks: list[tuple[MiddlewareHook, dict]] = []
     post_hooks: list[tuple[MiddlewareHook, dict]] = []
@@ -79,6 +94,7 @@ def load_plugins_from_config(
             pre_hooks.append((hook, plugin_config))
         except Exception:
             logger.exception("Failed to load pre_request plugin: %s", plugin_path)
+            raise
 
     for entry in middleware_config.get("post_response", []):
         plugin_path = entry["plugin"]
@@ -88,5 +104,6 @@ def load_plugins_from_config(
             post_hooks.append((hook, plugin_config))
         except Exception:
             logger.exception("Failed to load post_response plugin: %s", plugin_path)
+            raise
 
     return pre_hooks, post_hooks

@@ -1,5 +1,6 @@
 # Private deployment config — NEVER commit
 fly.toml
+Dockerfile.fly
 config.yaml
 .env
 .env.*

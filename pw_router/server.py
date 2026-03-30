@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import json
 import logging
 import os
 import time
@@ -18,6 +19,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from pw_router import __version__
 from pw_router.config import load_config
@@ -30,6 +32,42 @@ from pw_router.router import RouterEngine, _is_allowed
 logger = logging.getLogger("pw_router.server")
 
 MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_STREAM_DURATION_SECONDS = 300  # 5 minutes max for streaming responses
+
+# Allowlisted fields for chat completion requests.
+# Anything not in this set is stripped before forwarding to providers.
+ALLOWED_REQUEST_FIELDS = {
+    "model",
+    "messages",
+    "temperature",
+    "top_p",
+    "max_tokens",
+    "stream",
+    "stop",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "response_format",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "interest-cohort=()"
+        if request.url.path.startswith("/v1/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+def _sanitize_request_body(body: dict) -> dict:
+    """Strip unknown fields from request body before forwarding to providers."""
+    return {k: v for k, v in body.items() if k in ALLOWED_REQUEST_FIELDS}
 
 
 def create_app(config: dict | None = None) -> FastAPI:
@@ -47,7 +85,10 @@ def create_app(config: dict | None = None) -> FastAPI:
             path = os.environ.get("CONFIG_PATH", "config.yaml")
             cfg = load_config(path)
 
-        http_client = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0),
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
 
         adapters = {}
         for model_name, model_cfg in cfg["models"].items():
@@ -86,6 +127,8 @@ def create_app(config: dict | None = None) -> FastAPI:
         redoc_url=None,
     )
 
+    application.add_middleware(SecurityHeadersMiddleware)
+
     # --- Auth dependency ---
 
     async def authenticate(request: Request) -> None:
@@ -110,11 +153,22 @@ def create_app(config: dict | None = None) -> FastAPI:
     async def chat_completions(request: Request):
         await authenticate(request)
 
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_BODY_BYTES:
+        # Enforce body size limit on actual bytes, not Content-Length header
+        body_bytes = await request.body()
+        if len(body_bytes) > MAX_BODY_BYTES:
             raise HTTPException(status_code=413, detail="Request body too large (max 10MB)")
 
-        body = await request.json()
+        try:
+            body = json.loads(body_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from e
+
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+        # Strip unknown fields before forwarding to providers
+        body = _sanitize_request_body(body)
+
         client_name = request.state.client_name
         allowed_models = request.state.allowed_models
         router_engine: RouterEngine = request.app.state.router_engine
@@ -195,15 +249,19 @@ def create_app(config: dict | None = None) -> FastAPI:
 
         except httpx.HTTPStatusError as e:
             router_engine.record_failure(model_name)
+            logger.warning(
+                "Provider error for model %s: status=%d", model_name, e.response.status_code
+            )
             raise HTTPException(
                 status_code=502,
-                detail=f"Provider returned {e.response.status_code}",
+                detail="Upstream provider error",
             ) from e
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             router_engine.record_failure(model_name)
+            logger.warning("Provider unavailable for model %s: %s", model_name, type(e).__name__)
             raise HTTPException(
                 status_code=502,
-                detail=f"Provider unavailable: {type(e).__name__}",
+                detail="Upstream provider unavailable",
             ) from e
 
     @application.get("/v1/models")
@@ -232,13 +290,13 @@ def create_app(config: dict | None = None) -> FastAPI:
             "description": "Minimal, auditable LLM routing gateway",
             "docs": "https://github.com/Protocol-Wealth/pw-router",
             "endpoints": {
-                "POST /v1/chat/completions": "OpenAI-compatible chat completions (streaming + non-streaming)",
+                "POST /v1/chat/completions": "OpenAI-compatible chat completions",
                 "GET /v1/models": "List available models (requires auth)",
                 "GET /health": "Router health + per-model circuit breaker status",
             },
         }
 
-    SECURITY_TXT = (
+    security_txt_body = (
         "Contact: mailto:security@protocolwealthllc.com\n"
         "Expires: 2027-04-01T00:00:00.000Z\n"
         "Preferred-Languages: en\n"
@@ -252,11 +310,11 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     @application.get("/security.txt", response_class=PlainTextResponse)
     async def security_txt_root():
-        return SECURITY_TXT
+        return security_txt_body
 
     @application.get("/.well-known/security.txt", response_class=PlainTextResponse)
     async def security_txt():
-        return SECURITY_TXT
+        return security_txt_body
 
     @application.get("/favicon.ico")
     async def favicon():
@@ -286,11 +344,17 @@ async def _wrap_stream(
     router_engine: RouterEngine,
     start_time: float,
 ) -> AsyncIterator[str]:
-    """Wrap a provider stream to record metrics after completion."""
+    """Wrap a provider stream to record metrics and enforce timeout."""
     try:
-        async for chunk in stream:
-            yield chunk
+        async with asyncio.timeout(MAX_STREAM_DURATION_SECONDS):
+            async for chunk in stream:
+                yield chunk
         router_engine.record_success(model_name)
+    except TimeoutError:
+        router_engine.record_failure(model_name)
+        logger.warning(
+            "Stream timeout for model %s after %ds", model_name, MAX_STREAM_DURATION_SECONDS
+        )
     except Exception:
         router_engine.record_failure(model_name)
         raise

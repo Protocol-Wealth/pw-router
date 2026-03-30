@@ -198,6 +198,77 @@ class TestModelsEndpoint:
         assert response.status_code == 401
 
 
+class TestRequestSanitization:
+    def test_unknown_fields_stripped(self, sample_config, respx_mock):
+        """Ensure arbitrary fields like 'n' and 'user' are stripped before forwarding."""
+        captured = {}
+
+        def capture_request(request):
+            captured["body"] = request.content
+            return httpx.Response(200, json=OPENAI_CHAT_RESPONSE)
+
+        respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+            side_effect=capture_request
+        )
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "n": 100,
+                    "user": "impersonated",
+                    "logit_bias": {"50256": -100},
+                    "temperature": 0.5,
+                },
+                headers={"Authorization": "Bearer test-key-1"},
+            )
+        assert response.status_code == 200
+        import json
+
+        sent_body = json.loads(captured["body"])
+        # Temperature is allowed, n/user/logit_bias are stripped
+        assert "temperature" in sent_body
+        assert "n" not in sent_body
+        assert "user" not in sent_body
+        assert "logit_bias" not in sent_body
+
+    def test_invalid_json_returns_400(self, sample_config, respx_mock):
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                content=b"not json",
+                headers={
+                    "Authorization": "Bearer test-key-1",
+                    "Content-Type": "application/json",
+                },
+            )
+        assert response.status_code == 400
+
+
+class TestSecurityHeaders:
+    def test_api_responses_have_security_headers(self, sample_config, respx_mock):
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.get("/health")
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["X-Frame-Options"] == "DENY"
+
+    def test_api_responses_have_no_store(self, sample_config, respx_mock):
+        respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json=OPENAI_CHAT_RESPONSE)
+        )
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                headers={"Authorization": "Bearer test-key-1"},
+            )
+        assert response.headers.get("Cache-Control") == "no-store"
+
+
 class TestHealthEndpoint:
     def test_health_returns_status(self, sample_config, respx_mock):
         with TestClient(create_app(config=sample_config)) as client:
