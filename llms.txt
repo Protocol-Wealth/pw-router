@@ -12,7 +12,6 @@ pw-router is a stateless OpenAI-compatible API gateway that routes requests to m
 - Dependencies: 4 (fastapi, uvicorn, httpx, pyyaml) — pinned via requirements.lock
 - Status: v0.1.0 — production-ready, security-hardened
 - Repo: github.com/Protocol-Wealth/pw-router
-- Live: pw-router.fly.dev (ORD region)
 
 ## API Surface
 

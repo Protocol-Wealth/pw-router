@@ -42,13 +42,15 @@ jobs:
       - name: ${{ steps.action.outputs.action }} machines
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          MACHINE_LIST: ${{ secrets.FLY_MACHINE_LIST }}
         run: |
           ACTION="${{ steps.action.outputs.action }}"
           echo "Action: $ACTION"
 
-          for APP_MACHINE in "pw-router:8e795eb7243308" "pw-redact:1854296f49dd48"; do
+          IFS=',' read -ra MACHINES <<< "$MACHINE_LIST"
+          for APP_MACHINE in "${MACHINES[@]}"; do
             APP="${APP_MACHINE%%:*}"
             MACHINE="${APP_MACHINE##*:}"
-            echo "→ $ACTION $APP ($MACHINE)"
+            echo "→ $ACTION $APP"
             flyctl machines "$ACTION" "$MACHINE" --app "$APP" || true
           done

@@ -10,8 +10,7 @@
 - Language: Python 3.12, FastAPI
 - License: MIT (open source)
 - Repo: github.com/Protocol-Wealth/pw-router
-- Live: pw-router.fly.dev (Fly.io, ORD region)
-- Author: Protocol Wealth LLC (SEC-registered investment adviser)
+- Author: Protocol Wealth LLC
 - Version: 0.1.0
 - Dependencies: fastapi, uvicorn[standard], httpx, pyyaml — pinned in requirements.lock
 
@@ -286,13 +285,13 @@ Error messages are generic — no provider details leaked to clients.
 ### As an OpenAI SDK Client
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="https://pw-router.fly.dev/v1", api_key="your-key")
+client = OpenAI(base_url="http://localhost:8100/v1", api_key="your-key")
 response = client.chat.completions.create(model="claude-sonnet", messages=[...])
 ```
 
 ### As a curl Client
 ```bash
-curl -X POST https://pw-router.fly.dev/v1/chat/completions \
+curl -X POST http://localhost:8100/v1/chat/completions \
   -H "Authorization: Bearer your-key" \
   -H "Content-Type: application/json" \
   -d '{"model": "claude-sonnet", "messages": [{"role": "user", "content": "Hello"}]}'
@@ -336,4 +335,3 @@ pw-router --config config.yaml  # Run locally
 Stateless — runs anywhere: Docker, Fly.io, Railway, bare metal.
 Config from YAML file + env vars. No database. 512MB RAM sufficient.
 Dockerfile runs as non-root user. Dependencies pinned via requirements.lock.
-Currently deployed at pw-router.fly.dev (Fly.io, ORD/Chicago region).

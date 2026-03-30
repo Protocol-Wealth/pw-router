@@ -319,7 +319,6 @@ def create_app(config: dict | None = None) -> FastAPI:
         "Contact: mailto:security@protocolwealthllc.com\n"
         "Expires: 2027-04-01T00:00:00.000Z\n"
         "Preferred-Languages: en\n"
-        "Canonical: https://pw-router.fly.dev/.well-known/security.txt\n"
         "Policy: https://github.com/Protocol-Wealth/pw-router/blob/main/SECURITY.md\n"
     )
 

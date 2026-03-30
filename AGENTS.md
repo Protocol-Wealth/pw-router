@@ -9,9 +9,8 @@ pw-router is an open-source, MIT-licensed LLM routing gateway. It is intentional
 minimal (~1,100 lines of core) and must stay that way. Every design decision
 prioritizes auditability over features.
 
-**Owner:** Protocol Wealth LLC (SEC-registered investment adviser)
+**Owner:** Protocol Wealth LLC
 **Repo:** github.com/Protocol-Wealth/pw-router
-**Live:** pw-router.fly.dev (Fly.io, ORD region)
 **Stack:** Python 3.12, FastAPI, httpx, PyYAML
 **Tests:** 103 tests — pytest + pytest-asyncio + respx (mocked HTTP, no real API calls)
 
@@ -47,7 +46,7 @@ prioritizes auditability over features.
 
 **Public (this repo):** All routing logic, provider adapters, circuit breaker, health checks, middleware system, example plugins, tests, documentation.
 
-**Private (never in this repo):** API keys, production configs, internal PW URLs (nexusmcp.site, pwdashboard.com), PW-specific middleware plugins, regulatory governance docs (AGENTS.md from PW workspace is different from this file), client data.
+**Private (never in this repo):** API keys, production configs, internal service URLs, deployment hostnames/regions, organization-specific middleware plugins, private governance docs, client data.
 
 ## Architecture Quick Reference
 

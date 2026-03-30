@@ -31,11 +31,11 @@
 ### What NEVER goes in this repo:
 
 * API keys, secrets, tokens, passwords (use env vars exclusively)
-* Internal PW URLs (no nexusmcp.site, pwdashboard.com, protocolwealthllc.com in code)
+* Internal URLs for private services or dashboards
 * Client data, real model configs, production routing rules
-* PW-specific middleware plugins (pw-redact integration, audit logging, RBAC)
+* Organization-specific middleware plugins (audit logging, RBAC, PII redaction integrations)
 * References to specific clients, advisors, or internal business processes
-* AGENTS.md or ria.md (those are private governance docs)
+* Private governance or compliance documents
 
 ### Deployment separation:
 
@@ -168,38 +168,7 @@ pw-router/
     └── deployment.md            # Docker, Fly.io, Railway deployment guide
 ```
 
-**Total core: ~950 lines in pw_router/. Target: never exceed 1,500 lines.**
-
-### 2.3 Cross-Repo Contracts (PW internal — NOT in public docs)
-
-When used by Protocol Wealth internally, pw-router sits between PW services and LLM providers:
-
-```
-pw-nexus (CONSUMER)
-├── Calls POST /v1/chat/completions for all LLM inference
-├── Uses PW_ROUTER_API_KEY for auth
-├── Sends model name or relies on tag-based routing
-└── Env vars: PW_ROUTER_URL, PW_ROUTER_API_KEY
-
-pw-portal (CONSUMER)
-├── Go backend calls /v1/chat/completions for advisor-facing AI features
-├── Uses PW_ROUTER_API_KEY for auth
-└── Env vars: PW_ROUTER_URL, PW_ROUTER_API_KEY
-
-pw-redact (UPSTREAM DEPENDENCY — called by pw-router's redact plugin)
-├── POST /v1/redact — {"text": "...", "context": "meeting_transcript"}
-│   Returns: {"sanitized_text": "...", "manifest": {...}, "security": {...}}
-├── POST /v1/rehydrate — {"text": "...", "manifest": {...}}
-│   Returns: {"rehydrated_text": "..."}
-├── Auth: Bearer token via PW_REDACT_API_KEY
-└── Deployed: pw-redact.fly.dev (or RunPod serverless)
-
-LLM Providers (UPSTREAM — pw-router forwards to these)
-├── Anthropic API: api.anthropic.com (Claude models)
-├── RunPod vLLM: api.runpod.ai (self-hosted Llama, Qwen, etc.)
-├── OpenAI API: api.openai.com (if needed)
-└── Ollama: localhost:11434 (local dev inference)
-```
+**Total core: ~1,100 lines in pw_router/. Target: never exceed 1,500 lines.**
 
 ---
 
@@ -750,7 +719,7 @@ logging:
 
 ### 6.1 plugins/example_redact.py
 
-Demonstrates integration with a PII redaction service (like pw-redact).
+Demonstrates integration with an external PII redaction service.
 
 ```python
 """
@@ -1267,11 +1236,9 @@ MIT. Architectural patterns informed by Bifrost (Apache 2.0). See LICENSE.
 
 ## Built By
 
-Protocol Wealth LLC — SEC-registered investment adviser (CRD #335298)
+Protocol Wealth LLC
 ```
 
 ---
 
-*Protocol Wealth LLC | SEC-Registered Investment Adviser (CRD #335298)*
-*pw-router is open-source infrastructure under MIT license.*
-*Internal deployment config and compliance plugins are private.*
+*Protocol Wealth LLC — pw-router is open-source infrastructure under MIT license.*
