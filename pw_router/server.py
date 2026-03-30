@@ -224,6 +224,20 @@ def create_app(config: dict | None = None) -> FastAPI:
                 )
         return {"object": "list", "data": data}
 
+    @application.get("/")
+    async def root():
+        return {
+            "service": "pw-router",
+            "version": __version__,
+            "description": "Minimal, auditable LLM routing gateway",
+            "docs": "https://github.com/Protocol-Wealth/pw-router",
+            "endpoints": {
+                "POST /v1/chat/completions": "OpenAI-compatible chat completions (streaming + non-streaming)",
+                "GET /v1/models": "List available models (requires auth)",
+                "GET /health": "Router health + per-model circuit breaker status",
+            },
+        }
+
     @application.get("/health")
     async def health_check(request: Request):
         router_engine: RouterEngine = request.app.state.router_engine
