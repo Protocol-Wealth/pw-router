@@ -1,0 +1,26 @@
+# Copy to fly.toml and customize
+# DO NOT commit fly.toml — it's in .gitignore
+app = "your-pw-router"
+primary_region = "ewr"
+
+[build]
+
+[http_service]
+  internal_port = 8100
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[vm]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[checks]
+  [checks.health]
+    port = 8100
+    type = "http"
+    interval = "30s"
+    timeout = "5s"
+    path = "/health"

@@ -1,0 +1,74 @@
+# pw-router configuration
+# Copy to config.yaml and fill in real values
+# DO NOT commit config.yaml — it's in .gitignore
+
+server:
+  host: "0.0.0.0"
+  port: 8100
+  api_keys:
+    - key: "${PW_ROUTER_API_KEY_1}"
+      name: "default"
+      allowed_models: ["*"]
+
+models:
+  # Example: OpenAI
+  gpt-4o:
+    provider: openai
+    model: "gpt-4o"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+    max_retries: 2
+    timeout_seconds: 120
+    tags: ["external", "reasoning"]
+
+  # Example: Anthropic
+  claude-sonnet:
+    provider: anthropic
+    model: "claude-sonnet-4-20250514"
+    api_key: "${ANTHROPIC_API_KEY}"
+    max_retries: 2
+    timeout_seconds: 120
+    tags: ["external", "reasoning"]
+
+  # Example: Self-hosted vLLM on RunPod
+  local-llama:
+    provider: vllm
+    model: "meta-llama/Llama-3.1-70B-Instruct"
+    api_key: "${RUNPOD_API_KEY}"
+    base_url: "https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}/openai/v1"
+    max_retries: 1
+    timeout_seconds: 90
+    tags: ["self-hosted", "client-safe"]
+
+routing:
+  default_model: "claude-sonnet"
+  fallback_chains:
+    reasoning: ["claude-sonnet", "gpt-4o", "local-llama"]
+    fast: ["gpt-4o", "local-llama"]
+    client-safe: ["local-llama"]
+  rules:
+    - match:
+        tag: "client-data"
+      route_to_chain: "client-safe"
+
+health:
+  check_interval_seconds: 30
+  unhealthy_threshold: 3
+  healthy_threshold: 1
+  check_timeout_seconds: 5
+
+middleware:
+  pre_request: []
+  post_response: []
+  # Example with plugin:
+  # pre_request:
+  #   - plugin: "plugins.example_redact"
+  #     config:
+  #       endpoint: "${PW_REDACT_URL}"
+  #       api_key: "${PW_REDACT_API_KEY}"
+
+logging:
+  level: "INFO"
+  format: "json"
+  log_request_body: false
+  log_response_body: false
