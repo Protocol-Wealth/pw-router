@@ -22,11 +22,13 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response, Streami
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from pw_router import __version__
+from pw_router.audit_log import generate_request_id, log_auth_failure, log_request
 from pw_router.config import load_config
 from pw_router.health import health_check_loop
 from pw_router.middleware import MiddlewareContext, load_plugins_from_config
 from pw_router.models import AllModelsUnavailableError, ModelNotAllowedError, ModelNotFoundError
 from pw_router.providers import create_adapter
+from pw_router.rate_limit import RateLimiter
 from pw_router.router import RouterEngine, _is_allowed
 from pw_router.usage import UsageTracker
 
@@ -53,10 +55,15 @@ ALLOWED_REQUEST_FIELDS = {
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add security headers to all responses."""
+    """Add security headers and X-Request-Id to all responses."""
 
     async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("x-request-id") or generate_request_id()
+        request.state.request_id = request_id
+
         response = await call_next(request)
+
+        response.headers["X-Request-Id"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -69,6 +76,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 def _sanitize_request_body(body: dict) -> dict:
     """Strip unknown fields from request body before forwarding to providers."""
     return {k: v for k, v in body.items() if k in ALLOWED_REQUEST_FIELDS}
+
+
+def _get_remote_ip(request: Request) -> str | None:
+    """Get client IP, preferring X-Forwarded-For (Fly.io sets this)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
 
 
 def create_app(config: dict | None = None) -> FastAPI:
@@ -98,6 +115,13 @@ def create_app(config: dict | None = None) -> FastAPI:
         router_engine = RouterEngine(cfg)
         pre_hooks, post_hooks = load_plugins_from_config(cfg.get("middleware", {}))
 
+        # Rate limiter: configurable via config, defaults to 60 req/min per key
+        rl_config = cfg.get("rate_limit", {})
+        rate_limiter = RateLimiter(
+            max_requests=rl_config.get("max_requests", 60),
+            window_seconds=rl_config.get("window_seconds", 60),
+        )
+
         app.state.config = cfg
         app.state.http_client = http_client
         app.state.adapters = adapters
@@ -105,6 +129,7 @@ def create_app(config: dict | None = None) -> FastAPI:
         app.state.pre_request_hooks = pre_hooks
         app.state.post_response_hooks = post_hooks
         app.state.usage = UsageTracker()
+        app.state.rate_limiter = rate_limiter
 
         health_task = None
         interval = cfg.get("health", {}).get("check_interval_seconds", 30)
@@ -134,10 +159,21 @@ def create_app(config: dict | None = None) -> FastAPI:
     # --- Auth dependency ---
 
     async def authenticate(request: Request) -> None:
+        request_id = getattr(request.state, "request_id", generate_request_id())
         auth_header = request.headers.get("authorization")
         if not auth_header:
+            log_auth_failure(
+                request_id=request_id,
+                reason="missing_header",
+                remote_ip=_get_remote_ip(request),
+            )
             raise HTTPException(status_code=401, detail="Missing Authorization header")
         if not auth_header.startswith("Bearer "):
+            log_auth_failure(
+                request_id=request_id,
+                reason="invalid_format",
+                remote_ip=_get_remote_ip(request),
+            )
             raise HTTPException(status_code=401, detail="Invalid Authorization format")
 
         token = auth_header[7:]
@@ -147,6 +183,11 @@ def create_app(config: dict | None = None) -> FastAPI:
                 request.state.allowed_models = key_cfg["allowed_models"]
                 return
 
+        log_auth_failure(
+            request_id=request_id,
+            reason="invalid_key",
+            remote_ip=_get_remote_ip(request),
+        )
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     # --- Routes ---
@@ -154,6 +195,14 @@ def create_app(config: dict | None = None) -> FastAPI:
     @application.post("/v1/chat/completions")
     async def chat_completions(request: Request):
         await authenticate(request)
+
+        # Rate limiting per client
+        client_name = request.state.client_name
+        rate_limiter: RateLimiter = request.app.state.rate_limiter
+        if not rate_limiter.is_allowed(client_name):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+        request_id = getattr(request.state, "request_id", generate_request_id())
 
         # Enforce body size limit on actual bytes, not Content-Length header
         body_bytes = await request.body()
@@ -171,7 +220,6 @@ def create_app(config: dict | None = None) -> FastAPI:
         # Strip unknown fields before forwarding to providers
         body = _sanitize_request_body(body)
 
-        client_name = request.state.client_name
         allowed_models = request.state.allowed_models
         router_engine: RouterEngine = request.app.state.router_engine
         adapters = request.app.state.adapters
@@ -216,10 +264,23 @@ def create_app(config: dict | None = None) -> FastAPI:
             if is_stream:
                 stream = await adapter.chat_completion(ctx.request_body, model_cfg, stream=True)
                 usage_tracker.record_stream_request(client_name, model_name)
+                log_request(
+                    request_id=request_id,
+                    client_name=client_name,
+                    model=model_name,
+                    provider=model_cfg["provider"],
+                    status="streaming",
+                    latency_ms=0,
+                    stream=True,
+                )
                 return StreamingResponse(
                     _wrap_stream(stream, model_name, router_engine, start),
                     media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no",
+                        "X-Request-Id": request_id,
+                    },
                 )
             else:
                 response_data = await adapter.chat_completion(
@@ -230,12 +291,26 @@ def create_app(config: dict | None = None) -> FastAPI:
 
                 # Record token usage
                 resp_usage = response_data.get("usage", {})
+                p_tokens = resp_usage.get("prompt_tokens", 0)
+                c_tokens = resp_usage.get("completion_tokens", 0)
                 usage_tracker.record_request(
                     client_name=client_name,
                     model_name=model_name,
-                    prompt_tokens=resp_usage.get("prompt_tokens", 0),
-                    completion_tokens=resp_usage.get("completion_tokens", 0),
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens,
                     latency_ms=latency_ms,
+                )
+
+                # Audit log
+                log_request(
+                    request_id=request_id,
+                    client_name=client_name,
+                    model=model_name,
+                    provider=model_cfg["provider"],
+                    status="ok",
+                    latency_ms=latency_ms,
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens,
                 )
 
                 # Override model name to router alias
@@ -258,19 +333,35 @@ def create_app(config: dict | None = None) -> FastAPI:
                 return JSONResponse(content=ctx.response_body)
 
         except httpx.HTTPStatusError as e:
+            latency_ms = (time.monotonic() - start) * 1000
             router_engine.record_failure(model_name)
             usage_tracker.record_error(client_name, model_name)
-            logger.warning(
-                "Provider error for model %s: status=%d", model_name, e.response.status_code
+            log_request(
+                request_id=request_id,
+                client_name=client_name,
+                model=model_name,
+                provider=model_cfg["provider"],
+                status="provider_error",
+                latency_ms=latency_ms,
+                error=f"status_{e.response.status_code}",
             )
             raise HTTPException(
                 status_code=502,
                 detail="Upstream provider error",
             ) from e
         except (httpx.ConnectError, httpx.TimeoutException) as e:
+            latency_ms = (time.monotonic() - start) * 1000
             router_engine.record_failure(model_name)
             usage_tracker.record_error(client_name, model_name)
-            logger.warning("Provider unavailable for model %s: %s", model_name, type(e).__name__)
+            log_request(
+                request_id=request_id,
+                client_name=client_name,
+                model=model_name,
+                provider=model_cfg["provider"],
+                status="provider_unavailable",
+                latency_ms=latency_ms,
+                error=type(e).__name__,
+            )
             raise HTTPException(
                 status_code=502,
                 detail="Upstream provider unavailable",

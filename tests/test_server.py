@@ -305,6 +305,43 @@ class TestMetricsEndpoint:
         assert model_usage["completion_tokens"] == 5
 
 
+class TestRateLimiting:
+    def test_rate_limit_returns_429(self, sample_config, respx_mock):
+        respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json=OPENAI_CHAT_RESPONSE)
+        )
+        # Set very low rate limit
+        sample_config["rate_limit"] = {"max_requests": 2, "window_seconds": 60}
+        with TestClient(create_app(config=sample_config)) as client:
+            for _ in range(2):
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={"model": "test-model", "messages": [{"role": "user", "content": "Hi"}]},
+                    headers={"Authorization": "Bearer test-key-1"},
+                )
+                assert response.status_code == 200
+            # Third request should be rate limited
+            response = client.post(
+                "/v1/chat/completions",
+                json={"model": "test-model", "messages": [{"role": "user", "content": "Hi"}]},
+                headers={"Authorization": "Bearer test-key-1"},
+            )
+            assert response.status_code == 429
+
+
+class TestRequestId:
+    def test_response_has_request_id(self, sample_config, respx_mock):
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.get("/health")
+        assert "x-request-id" in response.headers
+        assert len(response.headers["x-request-id"]) == 16
+
+    def test_client_request_id_propagated(self, sample_config, respx_mock):
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.get("/health", headers={"X-Request-Id": "my-custom-id-123"})
+        assert response.headers["x-request-id"] == "my-custom-id-123"
+
+
 class TestHealthEndpoint:
     def test_health_returns_status(self, sample_config, respx_mock):
         with TestClient(create_app(config=sample_config)) as client:

@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
 
 from pw_router.models import AllModelsUnavailableError, ModelNotAllowedError, ModelNotFoundError
+
+logger = logging.getLogger("pw_router.circuit")
 
 
 class CircuitState(Enum):
@@ -24,6 +27,7 @@ class CircuitState(Enum):
 class CircuitBreaker:
     """Per-model circuit breaker. In-memory, resets on restart."""
 
+    name: str = ""
     state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
     last_failure_time: float = 0.0
@@ -32,11 +36,23 @@ class CircuitBreaker:
     healthy_threshold: int = 1
     cooldown_seconds: float = 30.0
 
+    def _transition(self, new_state: CircuitState) -> None:
+        old_state = self.state
+        self.state = new_state
+        if old_state != new_state:
+            logger.warning(
+                "Circuit %s: %s → %s (failures=%d)",
+                self.name,
+                old_state.value,
+                new_state.value,
+                self.failure_count,
+            )
+
     def record_success(self) -> None:
         if self.state == CircuitState.HALF_OPEN:
             self.success_count += 1
             if self.success_count >= self.healthy_threshold:
-                self.state = CircuitState.CLOSED
+                self._transition(CircuitState.CLOSED)
                 self.failure_count = 0
                 self.success_count = 0
         else:
@@ -47,14 +63,14 @@ class CircuitBreaker:
         self.last_failure_time = time.monotonic()
         self.success_count = 0
         if self.failure_count >= self.unhealthy_threshold:
-            self.state = CircuitState.OPEN
+            self._transition(CircuitState.OPEN)
 
     def should_allow(self) -> bool:
         if self.state == CircuitState.CLOSED:
             return True
         if self.state == CircuitState.OPEN:
             if time.monotonic() - self.last_failure_time > self.cooldown_seconds:
-                self.state = CircuitState.HALF_OPEN
+                self._transition(CircuitState.HALF_OPEN)
                 self.success_count = 0
                 return True
             return False
@@ -87,6 +103,7 @@ class RouterEngine:
 
         self.circuits: dict[str, CircuitBreaker] = {
             name: CircuitBreaker(
+                name=name,
                 unhealthy_threshold=threshold,
                 healthy_threshold=healthy_threshold,
                 cooldown_seconds=float(cooldown),
