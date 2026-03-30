@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 from pw_router import __version__
 from pw_router.config import load_config
@@ -237,6 +237,30 @@ def create_app(config: dict | None = None) -> FastAPI:
                 "GET /health": "Router health + per-model circuit breaker status",
             },
         }
+
+    SECURITY_TXT = (
+        "Contact: mailto:security@protocolwealthllc.com\n"
+        "Expires: 2027-04-01T00:00:00.000Z\n"
+        "Preferred-Languages: en\n"
+        "Canonical: https://pw-router.fly.dev/.well-known/security.txt\n"
+        "Policy: https://github.com/Protocol-Wealth/pw-router/blob/main/SECURITY.md\n"
+    )
+
+    @application.get("/robots.txt", response_class=PlainTextResponse)
+    async def robots_txt():
+        return "User-agent: *\nDisallow: /\n"
+
+    @application.get("/security.txt", response_class=PlainTextResponse)
+    async def security_txt_root():
+        return SECURITY_TXT
+
+    @application.get("/.well-known/security.txt", response_class=PlainTextResponse)
+    async def security_txt():
+        return SECURITY_TXT
+
+    @application.get("/favicon.ico")
+    async def favicon():
+        return Response(status_code=204)
 
     @application.get("/health")
     async def health_check(request: Request):
