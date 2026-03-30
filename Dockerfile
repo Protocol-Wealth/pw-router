@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir .
 
 COPY pw_router/ pw_router/
 COPY plugins/ plugins/
+COPY config.yaml .
 
 EXPOSE 8100
 

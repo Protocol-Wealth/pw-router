@@ -1,0 +1,42 @@
+# pw-router
+
+> Minimal, auditable LLM routing gateway for regulated environments.
+
+pw-router is a stateless OpenAI-compatible API gateway that routes requests to multiple LLM providers (Anthropic, OpenAI, vLLM/RunPod) with circuit breakers, fallback chains, and pluggable middleware. Built for financial services, healthcare, and any regulated industry where the entire codebase must be auditable.
+
+## Key Facts
+
+- Language: Python 3.12, FastAPI
+- License: MIT
+- Core: ~1,000 lines across 8 files
+- Dependencies: 4 (fastapi, uvicorn, httpx, pyyaml)
+- Status: v0.1.0 — production-ready MVP
+- Repo: github.com/Protocol-Wealth/pw-router
+
+## API Surface
+
+- POST /v1/chat/completions — OpenAI-compatible chat (streaming + non-streaming)
+- GET /v1/models — list available models (filtered by API key)
+- GET /health — router health + per-model circuit breaker status
+
+## Architecture
+
+Requests flow: Auth → Pre-middleware → Router (model select + circuit breaker) → Provider Adapter → Post-middleware → Response.
+
+Provider adapters translate between OpenAI format and provider-native formats. The Anthropic adapter handles full request/response translation including streaming SSE event conversion.
+
+Circuit breakers are per-model, in-memory (CLOSED → OPEN → HALF_OPEN). Fallback chains automatically route to the next healthy model.
+
+Middleware plugins are Python modules with pre_request/post_response async hooks that can modify requests, add routing tags, or block traffic.
+
+## Configuration
+
+Single YAML file with ${ENV_VAR} expansion. No database. Models, routing rules, fallback chains, and middleware all configured declaratively.
+
+## Documentation
+
+- Full docs: llms-full.txt
+- Architecture: docs/architecture.md
+- Plugin guide: docs/plugins.md
+- Deployment: docs/deployment.md
+- Contributing: CONTRIBUTING.md

@@ -1,0 +1,266 @@
+# pw-router — Full LLM Context
+
+> This file provides comprehensive context for AI assistants working with or integrating pw-router.
+> For a concise overview, see llms.txt.
+
+## Project Identity
+
+- Name: pw-router
+- Purpose: Minimal, auditable LLM routing gateway for regulated environments
+- Language: Python 3.12, FastAPI
+- License: MIT (open source)
+- Repo: github.com/Protocol-Wealth/pw-router
+- Author: Protocol Wealth LLC (SEC-registered investment adviser)
+- Version: 0.1.0
+- Dependencies: fastapi>=0.115, uvicorn[standard]>=0.30, httpx>=0.27, pyyaml>=6.0
+
+## Why It Exists
+
+LiteLLM (the dominant LLM gateway) suffered a supply-chain attack in March 2025, has 50+ transitive dependencies, 800+ open issues, and a codebase impossible for compliance teams to audit. pw-router is the deliberate alternative: 4 dependencies, ~1,000 lines of core, readable by a compliance officer in an afternoon.
+
+## File Structure
+
+```
+pw_router/
+├── __init__.py      # Package init, exports __version__
+├── __main__.py      # CLI: python -m pw_router / pw-router command
+├── server.py        # FastAPI app, lifespan, route handlers, API key auth
+├── router.py        # RouterEngine: model selection, CircuitBreaker, fallback chains
+├── providers.py     # ProviderAdapter protocol + OpenAI, Anthropic, vLLM adapters
+├── middleware.py     # MiddlewareContext, MiddlewareResult, plugin loader
+├── config.py        # YAML loader with ${ENV_VAR} expansion, config validation
+├── health.py        # Background async health check loop
+└── models.py        # Exception classes: ModelNotFoundError, ModelNotAllowedError, AllModelsUnavailableError
+
+plugins/
+├── __init__.py
+├── example_redact.py   # Example PII redaction middleware
+└── example_logger.py   # Example structured audit logger
+
+tests/
+├── conftest.py         # Shared fixtures, sample_config
+├── test_server.py      # API endpoint + auth tests (96 tests total)
+├── test_router.py      # Model selection, circuit breaker, fallback tests
+├── test_providers.py   # Provider adapter tests with mocked HTTP
+├── test_middleware.py   # Plugin loading, hook execution tests
+├── test_health.py      # Health check loop tests
+└── test_config.py      # Config loading, env var expansion, validation tests
+```
+
+## API Endpoints
+
+### POST /v1/chat/completions
+OpenAI-compatible chat completions. Drop-in replacement for any OpenAI SDK client.
+
+Request (standard OpenAI format):
+```json
+{
+  "model": "claude-sonnet",
+  "messages": [
+    {"role": "system", "content": "You are helpful."},
+    {"role": "user", "content": "Hello"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 2000,
+  "stream": false
+}
+```
+
+Response (standard OpenAI format):
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1711000000,
+  "model": "claude-sonnet",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "Hello!"},
+    "finish_reason": "stop"
+  }],
+  "usage": {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60}
+}
+```
+
+Streaming (stream: true) returns SSE in OpenAI chunk format:
+```
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: [DONE]
+```
+
+Auth: Bearer token in Authorization header. Returns 401 if missing/invalid, 403 if model not in client's allowlist.
+
+### GET /v1/models
+Returns models the authenticated client is allowed to use. Auth required.
+
+### GET /health
+No auth. Returns per-model circuit breaker status:
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "models": {
+    "claude-sonnet": {"status": "healthy", "circuit": "closed"},
+    "local-llama": {"status": "unhealthy", "circuit": "open"}
+  }
+}
+```
+
+## Configuration (config.yaml)
+
+Single YAML file. Environment variables expanded via ${VAR_NAME} syntax at load time.
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 8100
+  api_keys:
+    - key: "${PW_ROUTER_API_KEY_1}"    # Env var expanded at load
+      name: "my-app"                    # Identity for audit logging
+      allowed_models: ["*"]             # Glob patterns: "*", "local-*", "claude-*"
+
+models:
+  claude-sonnet:
+    provider: anthropic                 # openai | anthropic | vllm
+    model: "claude-sonnet-4-20250514"   # Actual model ID sent to provider
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "https://api.anthropic.com"  # Optional, has sensible defaults
+    timeout_seconds: 120
+    tags: ["external", "reasoning"]     # Used by tag-based routing rules
+
+  local-llama:
+    provider: vllm
+    model: "meta-llama/Llama-3.1-70B-Instruct"
+    api_key: "${RUNPOD_API_KEY}"
+    base_url: "https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}/openai/v1"
+    timeout_seconds: 90
+    tags: ["self-hosted", "client-safe"]
+
+routing:
+  default_model: "claude-sonnet"        # Used when request doesn't specify model
+  fallback_chains:
+    reasoning: ["claude-sonnet", "local-llama"]
+    client-safe: ["local-llama"]        # Tag "client-data" routes here
+  rules:
+    - match:
+        tag: "client-data"             # Middleware adds this tag when PII detected
+      route_to_chain: "client-safe"    # Forces self-hosted models
+
+health:
+  check_interval_seconds: 30
+  unhealthy_threshold: 3               # Consecutive failures → circuit OPEN
+  healthy_threshold: 1                 # Successes in HALF_OPEN → circuit CLOSED
+  check_timeout_seconds: 5
+
+middleware:
+  pre_request:                         # Hooks run before provider call
+    - plugin: "plugins.example_redact"
+      config:
+        endpoint: "${PW_REDACT_URL}"
+  post_response: []                    # Hooks run after provider response
+```
+
+## Core Components
+
+### RouterEngine (router.py)
+Model selection with circuit breakers and fallback chains.
+
+select_model(requested_model, tags, allowed_models) → str:
+1. Explicit model in request → use it (check allowlist)
+2. Tag matches routing rule → select that chain
+3. No match → default_model
+4. If circuit OPEN → walk fallback chain
+5. All exhausted → raise AllModelsUnavailableError (503)
+
+### CircuitBreaker (router.py)
+Per-model, in-memory. States: CLOSED → OPEN → HALF_OPEN.
+- CLOSED: healthy, all requests pass. N failures → OPEN.
+- OPEN: skip this model. After cooldown → HALF_OPEN.
+- HALF_OPEN: allow one probe. Success → CLOSED. Failure → OPEN.
+Resets on restart (safe default).
+
+### Provider Adapters (providers.py)
+Protocol: chat_completion(body, model_config, stream) and health_check(model_config).
+
+- OpenAIAdapter: pass-through, changes base_url and auth header
+- AnthropicAdapter: full format translation (system message extraction, stop_reason mapping, streaming SSE event conversion from Anthropic events to OpenAI chunks)
+- VLLMAdapter: extends OpenAIAdapter (vLLM is OpenAI-compatible)
+
+All adapters share a single httpx.AsyncClient created at startup.
+
+### Middleware (middleware.py)
+MiddlewareContext carries request/response data through the pipeline.
+MiddlewareResult controls allow/block with error message and status code.
+Plugins loaded via importlib.import_module from dotted paths in config.
+
+Pre-request hooks can: modify request_body, add routing tags to ctx.tags, block with allow=False.
+Post-response hooks can: inspect/modify response, log audit data, block.
+
+### Auth (server.py)
+API key from Bearer token compared with hmac.compare_digest (constant-time).
+Each key has a name (audit identity) and allowed_models list (glob patterns).
+
+## Integration Guide
+
+### As an OpenAI SDK Client
+```python
+from openai import OpenAI
+client = OpenAI(base_url="https://your-pw-router/v1", api_key="your-key")
+response = client.chat.completions.create(model="claude-sonnet", messages=[...])
+```
+
+### As a curl Client
+```bash
+curl -X POST https://your-pw-router/v1/chat/completions \
+  -H "Authorization: Bearer your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+### Writing a Middleware Plugin
+```python
+from pw_router.middleware import MiddlewareContext, MiddlewareResult
+
+async def pre_request(ctx: MiddlewareContext) -> MiddlewareResult:
+    # ctx.request_body, ctx.client_name, ctx.tags, ctx.metadata, ctx.config
+    return MiddlewareResult(allow=True)
+
+async def post_response(ctx: MiddlewareContext) -> MiddlewareResult:
+    # additionally: ctx.response_body, ctx.model_used, ctx.latency_ms, ctx.provider
+    return MiddlewareResult(allow=True)
+```
+
+Register in config.yaml under middleware.pre_request or middleware.post_response.
+
+### Adding a Provider Adapter
+1. Create class in providers.py implementing ProviderAdapter protocol
+2. Register in create_adapter() factory
+3. Add provider name to valid_providers in config.py
+4. Write tests with respx mocks in tests/test_providers.py
+
+## Development Commands
+
+```bash
+pip install -e ".[dev]"      # Install with dev deps
+pytest -v                     # Run 96 tests
+ruff check pw_router/ tests/  # Lint
+ruff format pw_router/ tests/ # Format
+pw-router --config config.yaml  # Run locally
+```
+
+## Security Model
+
+- Constant-time API key comparison (hmac.compare_digest)
+- Per-key model allowlists with glob patterns
+- 10MB request body limit
+- No request/response body logging by default
+- No disk writes, no telemetry, no analytics
+- Provider API keys never logged
+- TLS handled by deployment platform
+
+## Deployment
+
+Stateless — runs anywhere: Docker, Fly.io, Railway, bare metal.
+Config from YAML file + env vars. No database. 512MB RAM sufficient.
+```
