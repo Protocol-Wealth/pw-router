@@ -28,6 +28,7 @@ from pw_router.middleware import MiddlewareContext, load_plugins_from_config
 from pw_router.models import AllModelsUnavailableError, ModelNotAllowedError, ModelNotFoundError
 from pw_router.providers import create_adapter
 from pw_router.router import RouterEngine, _is_allowed
+from pw_router.usage import UsageTracker
 
 logger = logging.getLogger("pw_router.server")
 
@@ -103,6 +104,7 @@ def create_app(config: dict | None = None) -> FastAPI:
         app.state.router_engine = router_engine
         app.state.pre_request_hooks = pre_hooks
         app.state.post_response_hooks = post_hooks
+        app.state.usage = UsageTracker()
 
         health_task = None
         interval = cfg.get("health", {}).get("check_interval_seconds", 30)
@@ -209,9 +211,11 @@ def create_app(config: dict | None = None) -> FastAPI:
         start = time.monotonic()
 
         # 5. Forward request
+        usage_tracker: UsageTracker = request.app.state.usage
         try:
             if is_stream:
                 stream = await adapter.chat_completion(ctx.request_body, model_cfg, stream=True)
+                usage_tracker.record_stream_request(client_name, model_name)
                 return StreamingResponse(
                     _wrap_stream(stream, model_name, router_engine, start),
                     media_type="text/event-stream",
@@ -223,6 +227,16 @@ def create_app(config: dict | None = None) -> FastAPI:
                 )
                 latency_ms = (time.monotonic() - start) * 1000
                 router_engine.record_success(model_name)
+
+                # Record token usage
+                resp_usage = response_data.get("usage", {})
+                usage_tracker.record_request(
+                    client_name=client_name,
+                    model_name=model_name,
+                    prompt_tokens=resp_usage.get("prompt_tokens", 0),
+                    completion_tokens=resp_usage.get("completion_tokens", 0),
+                    latency_ms=latency_ms,
+                )
 
                 # Override model name to router alias
                 response_data["model"] = model_name
@@ -245,6 +259,7 @@ def create_app(config: dict | None = None) -> FastAPI:
 
         except httpx.HTTPStatusError as e:
             router_engine.record_failure(model_name)
+            usage_tracker.record_error(client_name, model_name)
             logger.warning(
                 "Provider error for model %s: status=%d", model_name, e.response.status_code
             )
@@ -254,6 +269,7 @@ def create_app(config: dict | None = None) -> FastAPI:
             ) from e
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             router_engine.record_failure(model_name)
+            usage_tracker.record_error(client_name, model_name)
             logger.warning("Provider unavailable for model %s: %s", model_name, type(e).__name__)
             raise HTTPException(
                 status_code=502,
@@ -278,6 +294,12 @@ def create_app(config: dict | None = None) -> FastAPI:
                 )
         return {"object": "list", "data": data}
 
+    @application.get("/metrics")
+    async def metrics(request: Request):
+        await authenticate(request)
+        usage_tracker: UsageTracker = request.app.state.usage
+        return usage_tracker.snapshot()
+
     @application.get("/")
     async def root():
         return {
@@ -289,6 +311,7 @@ def create_app(config: dict | None = None) -> FastAPI:
                 "POST /v1/chat/completions": "OpenAI-compatible chat completions",
                 "GET /v1/models": "List available models (requires auth)",
                 "GET /health": "Router health + per-model circuit breaker status",
+                "GET /metrics": "Token usage per client and model (requires auth)",
             },
         }
 

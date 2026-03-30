@@ -269,6 +269,42 @@ class TestSecurityHeaders:
         assert response.headers.get("Cache-Control") == "no-store"
 
 
+class TestMetricsEndpoint:
+    def test_metrics_requires_auth(self, sample_config, respx_mock):
+        with TestClient(create_app(config=sample_config)) as client:
+            response = client.get("/metrics")
+        assert response.status_code == 401
+
+    def test_metrics_returns_usage(self, sample_config, respx_mock):
+        respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json=OPENAI_CHAT_RESPONSE)
+        )
+        with TestClient(create_app(config=sample_config)) as client:
+            # Make a request to generate usage data
+            client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+                headers={"Authorization": "Bearer test-key-1"},
+            )
+            # Check metrics
+            response = client.get(
+                "/metrics",
+                headers={"Authorization": "Bearer test-key-1"},
+            )
+        data = response.json()
+        assert response.status_code == 200
+        assert data["totals"]["requests"] == 1
+        assert "uptime_seconds" in data
+        assert "test-client" in data["by_client"]
+        assert "test-model" in data["by_client"]["test-client"]
+        model_usage = data["by_client"]["test-client"]["test-model"]
+        assert model_usage["prompt_tokens"] == 10
+        assert model_usage["completion_tokens"] == 5
+
+
 class TestHealthEndpoint:
     def test_health_returns_status(self, sample_config, respx_mock):
         with TestClient(create_app(config=sample_config)) as client:
