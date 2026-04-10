@@ -5,10 +5,7 @@ name: Machine Schedule
 # Adjust crons by +1 hour in November if needed.
 
 on:
-  schedule:
-    - cron: "0 14 * * 1-5"  # Start: 10 AM EDT / 9 AM EST, Mon-Fri
-    - cron: "0 20 * * 1-5"  # Stop:  4 PM EDT / 3 PM EST, Mon-Fri
-  workflow_dispatch:
+  workflow_dispatch:  # Manual only — pw-router is discontinued
     inputs:
       action:
         description: "start or stop"
